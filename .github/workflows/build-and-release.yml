@@ -9,6 +9,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      issues: write
+      pull-requests: write
     
     steps:
     - name: Checkout code
@@ -36,16 +41,13 @@ jobs:
         cp package.json orca-today-plugin/
         cp README.md orca-today-plugin/
         
-        # 创建插件图标（如果不存在）
-        if [ ! -f icon.png ]; then
-          # 创建一个简单的图标占位符
-          echo "Creating placeholder icon..."
-          # 这里可以添加创建图标的逻辑
-        fi
-        
         # 复制图标
-        if [ -f icon.png ]; then
+        if [ -f icon.svg ]; then
+          cp icon.svg orca-today-plugin/
+        elif [ -f icon.png ]; then
           cp icon.png orca-today-plugin/
+        else
+          echo "No icon file found, skipping icon copy"
         fi
         
         # 创建压缩包
@@ -65,5 +67,25 @@ jobs:
         generate_release_notes: true
         draft: false
         prerelease: false
+        body: |
+          ## 🎉 Orca Today Plugin Release
+          
+          ### 功能特性
+          - 🏷️ 自动标签管理：自动检测和管理带有 #Today 标签的块
+          - 📅 智能日期更新：自动为 Today 标签添加 date 属性并保持为当前日期
+          - ⚡ 实时监控：每30秒检查新添加的 Today 标签并立即处理
+          - 🔄 定时更新：每1小时自动更新所有 Today 标签的日期属性
+          - 🎯 手动控制：提供命令面板命令手动触发更新
+          - 🌐 多语言支持：支持中文界面
+          - 🛡️ 错误处理：完善的错误处理和日志记录
+          
+          ### 安装方法
+          1. 下载 `orca-today-plugin.zip`
+          2. 解压到 Orca Note 的 `plugins` 目录
+          3. 重启 Orca Note
+          4. 在设置中启用插件
+          
+          ### 使用方法
+          在任意块中添加 `#Today` 标签，插件会自动处理。
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

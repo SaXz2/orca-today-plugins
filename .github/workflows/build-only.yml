@@ -1,0 +1,61 @@
+name: Build Only
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Build plugin
+      run: npm run build
+      
+    - name: Create plugin package
+      run: |
+        # 创建插件发布目录
+        mkdir -p orca-today-plugin
+        
+        # 复制必要文件到插件目录
+        cp dist/index.js orca-today-plugin/
+        cp package.json orca-today-plugin/
+        cp README.md orca-today-plugin/
+        cp LICENSE orca-today-plugin/
+        
+        # 复制图标
+        if [ -f icon.svg ]; then
+          cp icon.svg orca-today-plugin/
+        elif [ -f icon.png ]; then
+          cp icon.png orca-today-plugin/
+        else
+          echo "No icon file found, skipping icon copy"
+        fi
+        
+        # 创建压缩包
+        zip -r orca-today-plugin.zip orca-today-plugin/
+        
+        # 显示文件列表
+        echo "Plugin package contents:"
+        ls -la orca-today-plugin/
+        
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: orca-today-plugin
+        path: orca-today-plugin.zip
