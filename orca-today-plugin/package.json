@@ -1,0 +1,43 @@
+{
+  "name": "orca-today-plugin",
+  "version": "0.1.0",
+  "description": "一个为 Orca Note 设计的智能 Today 标签管理插件",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "cross-env NODE_ENV=production tsc && vite build",
+    "preview": "vite preview"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "valtio": "^1.13.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
+    "@vitejs/plugin-react-swc": "^3.5.0",
+    "cross-env": "^7.0.3",
+    "rollup-plugin-external-globals": "^0.9.2",
+    "typescript": "^5.2.2",
+    "vite": "^5.2.0"
+  },
+  "keywords": [
+    "orca",
+    "orca-note",
+    "plugin",
+    "today",
+    "tag",
+    "date",
+    "automation"
+  ],
+  "author": "SaXz2",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SaXz2/orca-today-plugins.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SaXz2/orca-today-plugins/issues"
+  },
+  "homepage": "https://github.com/SaXz2/orca-today-plugins#readme"
+}
