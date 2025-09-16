@@ -1,6 +1,6 @@
 {
   "name": "orca-today-plugin",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "description": "一个为 Orca Note 设计的智能 Today 标签管理插件",
   "type": "module",
   "scripts": {

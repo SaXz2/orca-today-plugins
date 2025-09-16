@@ -21,91 +21,90 @@ const RefType = {
 
 let pluginName: string;
 let updateInterval: number | null = null;
-let processedBlocks: Set<string> = new Set();
-let isProcessing: boolean = false;
-let debounceTimer: number | null = null;
+let lastKnownBlockCount = 0; // 用于检测是否有新的Today标签块
 
 export async function load(name: string) {
   pluginName = name;
   setupL10N(orca.state.locale, { "zh-CN": zhCN });
 
-  // 注册立即处理新Today标签的命令
+  // 注册更新Today标签的命令
   orca.commands.registerCommand(
-    `${pluginName}.processNewTodayTags`,
+    `${pluginName}.updateTodayTags`,
     async () => {
-      await processNewTodayTags();
+      const updatedCount = await updateAllTodayTags();
+      orca.commands.invokeCommand("core.notify", {
+        message: t("today_dates_updated", { count: updatedCount.toString() }),
+        type: "info"
+      });
     },
-    "立即处理新Today标签"
+    t("update_today_dates_command")
   );
 
   // 检查并创建Today标签
   await ensureTodayTagExists();
   
-  // 初始更新
-  await updateTodayDates();
+  // 初始更新并设置基准块数量
+  const initialCount = await updateAllTodayTags();
+  lastKnownBlockCount = (await orca.invokeBackend("get-blocks-with-tags", ["Today"])).length;
+  console.log(`📊 初始化：发现 ${lastKnownBlockCount} 个Today标签块`);
 
-  // 设置定时更新（每天更新一次）
+  // 设置定时更新（每小时更新一次）
   updateInterval = setInterval(() => {
-    updateTodayDates().catch(console.error);
-  }, 24 * 60 * 60 * 1000);
+    updateAllTodayTags().catch(console.error);
+  }, 60 * 60 * 1000);
 
-  // 使用更智能的检测方式：只在用户操作后检测
-  setupSmartDetection();
+  // 设置随机间隔检测（0.5s/1s/2s随机，分散性能负载）
+  function scheduleRandomCheck() {
+    const intervals = [500, 1000, 2000]; // 0.5s, 1s, 2s
+    const randomInterval = intervals[Math.floor(Math.random() * intervals.length)];
+    
+    setTimeout(() => {
+      quickCheckForNewTodayTags()
+        .catch(console.error)
+        .finally(() => scheduleRandomCheck()); // 递归调度下一次检测
+    }, randomInterval);
+  }
+  
+  scheduleRandomCheck(); // 启动随机检测
 
+  // 尝试监听多种可能的事件，实现即时响应
+  try {
+    if (orca.broadcasts && orca.broadcasts.registerHandler) {
+      // 尝试各种可能的事件名称
+      const eventTypes = [
+        'core.blockChanged',
+        'core.tagAdded', 
+        'core.blockUpdated',
+        'core.dataChanged',
+        'core.documentChanged',
+        'editor.blockChanged',
+        'editor.tagAdded'
+      ];
+      
+      eventTypes.forEach(eventType => {
+        try {
+          orca.broadcasts.registerHandler(eventType, () => {
+            console.log(`📡 收到 ${eventType} 广播，立即检查Today标签`);
+            updateAllTodayTags().catch(console.error);
+          });
+        } catch (e) {
+          // 静默忽略无效的事件类型
+        }
+      });
+
+      console.log('✅ 已注册多种事件监听器');
+    }
+  } catch (error) {
+    console.log('⚠️ 无法注册广播监听器，使用超快定时检测模式');
+  }
 }
 
 export async function unload() {
-  orca.commands.unregisterCommand(`${pluginName}.processNewTodayTags`);
+  orca.commands.unregisterCommand(`${pluginName}.updateTodayTags`);
   
   if (updateInterval !== null) {
     clearInterval(updateInterval);
     updateInterval = null;
-  }
-  
-  if (debounceTimer !== null) {
-    clearTimeout(debounceTimer);
-    debounceTimer = null;
-  }
-  
-  // 清理缓存
-  processedBlocks.clear();
-  isProcessing = false;
-}
-
-/**
- * 设置智能检测机制
- */
-function setupSmartDetection(): void {
-  // 使用更频繁的检测，但只在有变化时处理
-  // 每1秒检查一次，提供快速响应
-  setInterval(() => {
-    // 只在没有正在处理时才检测
-    if (!isProcessing) {
-      checkForNewTodayTags().then(hasNew => {
-        if (hasNew) {
-          // 立即处理，不使用防抖
-          processNewTodayTags().catch(console.error);
-        }
-      }).catch(console.error);
-    }
-  }, 1000); // 1秒检查一次
-}
-
-/**
- * 检查是否有新的Today标签（轻量级检查）
- */
-async function checkForNewTodayTags(): Promise<boolean> {
-  try {
-    const blocksWithTodayTag = await orca.invokeBackend("get-blocks-with-tags", ["Today"]);
-    
-    // 检查是否有未处理的块
-    const hasNewBlocks = blocksWithTodayTag.some((blockRef: any) => 
-      !processedBlocks.has(blockRef.id)
-    );
-    
-    return hasNewBlocks;
-  } catch {
-    return false;
   }
 }
 
@@ -117,7 +116,6 @@ function getToday(): Date {
   today.setHours(0, 0, 0, 0);
   return today;
 }
-
 
 /**
  * 检查日期是否需要更新
@@ -178,138 +176,61 @@ async function ensureTodayTagExists(): Promise<void> {
   }
 }
 
-
-
 /**
- * 处理新插入的Today标签（实时监听）
+ * 随机间隔检查Today标签（性能分散版本）
  */
-async function processNewTodayTags(): Promise<void> {
-  // 防止重复处理
-  if (isProcessing) return;
-  
+async function quickCheckForNewTodayTags(): Promise<void> {
   try {
-    isProcessing = true;
-    const today = getToday();
     const blocksWithTodayTag = await orca.invokeBackend("get-blocks-with-tags", ["Today"]);
+    const currentBlockCount = blocksWithTodayTag.length;
     
-    // 只处理新的块，避免重复处理
-    const newBlocks = blocksWithTodayTag.filter((blockRef: any) => 
-      !processedBlocks.has(blockRef.id)
-    );
-    
-    for (const blockRef of newBlocks) {
-      const blockId = blockRef.id;
-      const block = await orca.invokeBackend("get-block", blockId);
-      if (!block) continue;
-
-      // 查找Today标签引用
-      const todayRef = (block.refs || []).find(
-        (ref: any) => ref.type === RefType.Property && ref.alias === "Today"
-      );
-
-      if (!todayRef) {
-        // 没有Today属性引用，创建它
-        try {
-          await orca.commands.invokeEditorCommand(
-            "core.editor.insertTag",
-            null,
-            blockId,
-            "Today"
-          );
-          
-          // 重新获取块数据以获取Today引用
-          const updatedBlock = await orca.invokeBackend("get-block", blockId);
-          const newTodayRef = (updatedBlock.refs || []).find(
-            (ref: any) => ref.type === RefType.Property && ref.alias === "Today"
-          );
-          
-          if (newTodayRef) {
-            // 为Today标签的引用添加date数据
-            await orca.commands.invokeEditorCommand(
-              "core.editor.setRefData",
-              null,
-              newTodayRef,
-              [{ name: "date", type: PropType.DateTime, value: today }]
-            );
-          }
-          
-          // 为块本身添加date属性
-          await orca.commands.invokeEditorCommand(
-            "core.editor.setProperties",
-            null,
-            [blockId],
-            [{ name: "date", type: PropType.DateTime, value: today }]
-          );
-          
-          // 标记为已处理
-          processedBlocks.add(blockId);
-        } catch (error) {
-          // 静默处理错误，避免过多日志
-        }
-        continue;
-      }
-
-      // 检查是否有date属性
-      const dateProperty = (todayRef.data || []).find((prop: any) => prop.name === "date");
+    if (currentBlockCount !== lastKnownBlockCount) {
+      console.log(`🎲 随机检测到Today标签数量变化：${lastKnownBlockCount} -> ${currentBlockCount}`);
+      lastKnownBlockCount = currentBlockCount;
       
-      if (!dateProperty) {
-        // 有Today属性引用但没有date属性，立即创建date属性
-        try {
-          // 为Today标签的引用添加date数据
-          await orca.commands.invokeEditorCommand(
-            "core.editor.setRefData",
-            null,
-            todayRef,
-            [{ name: "date", type: PropType.DateTime, value: today }]
-          );
-          
-          // 为块本身添加date属性
-          await orca.commands.invokeEditorCommand(
-            "core.editor.setProperties",
-            null,
-            [blockId],
-            [{ name: "date", type: PropType.DateTime, value: today }]
-          );
-          
-          // 标记为已处理
-          processedBlocks.add(blockId);
-        } catch (error) {
-          // 静默处理错误，避免过多日志
-        }
-      } else {
-        // 已经有date属性，标记为已处理
-        processedBlocks.add(blockId);
-      }
+      // 有变化时立即执行完整更新
+      await updateAllTodayTags();
     }
+    // 没有变化时完全静默
   } catch (error) {
-    // 静默处理错误，避免过多日志
-  } finally {
-    isProcessing = false;
+    // 减少错误日志频率，避免刷屏
+    if (Math.random() < 0.1) {
+      console.error('随机检测Today标签时出错:', error);
+    }
   }
 }
 
 /**
- * 更新Today标签的日期属性
+ * 更新所有Today标签的日期属性（统一处理函数）
  */
-async function updateTodayDates(): Promise<number> {
+async function updateAllTodayTags(): Promise<number> {
   try {
+    console.log('开始更新Today标签...');
     const today = getToday();
     const blocksWithTodayTag = await orca.invokeBackend("get-blocks-with-tags", ["Today"]);
     let updatedCount = 0;
     
+    console.log(`找到 ${blocksWithTodayTag.length} 个带Today标签的块`);
+    
     for (const blockRef of blocksWithTodayTag) {
       const blockId = blockRef.id;
-      const block = await orca.invokeBackend("get-block", blockId);
-      if (!block) continue;
+      console.log(`处理块 ${blockId}`);
+      
+      try {
+        const block = await orca.invokeBackend("get-block", blockId);
+        if (!block) {
+          console.log(`块 ${blockId} 不存在，跳过`);
+          continue;
+        }
 
-      // 查找Today标签引用
-      const todayRef = (block.refs || []).find(
-        (ref: any) => ref.type === RefType.Property && ref.alias === "Today"
-      );
+        // 查找Today标签引用
+        const todayRef = (block.refs || []).find(
+          (ref: any) => ref.type === RefType.Property && ref.alias === "Today"
+        );
 
-      if (!todayRef) {
-        // 没有Today属性引用，创建它
-        try {
+        if (!todayRef) {
+          console.log(`块 ${blockId} 没有Today标签引用，创建中...`);
+          // 没有Today属性引用，创建它
           await orca.commands.invokeEditorCommand(
             "core.editor.insertTag",
             null,
@@ -331,6 +252,7 @@ async function updateTodayDates(): Promise<number> {
               newTodayRef,
               [{ name: "date", type: PropType.DateTime, value: today }]
             );
+            console.log(`为Today标签引用添加date数据成功: 块 ${blockId}`);
           }
           
           // 为块本身添加date属性
@@ -342,38 +264,63 @@ async function updateTodayDates(): Promise<number> {
           );
           
           updatedCount++;
-        } catch (error) {
-          console.error(`处理新Today标签失败: 块 ${blockId}`, error);
+          console.log(`✅ 成功为块 ${blockId} 创建Today标签和date属性`);
+          continue;
         }
-        continue;
-      }
 
-      // 检查date属性是否需要更新
-      const dateProperty = (todayRef.data || []).find((prop: any) => prop.name === "date");
-      
-      if (!dateProperty || needsDateUpdate(dateProperty.value, today)) {
-        // 为Today标签的引用添加date数据
-        await orca.commands.invokeEditorCommand(
-          "core.editor.setRefData",
-          null,
-          todayRef,
-          [{ name: "date", type: PropType.DateTime, value: today }]
-        );
+        // 检查是否需要更新date属性
+        const dateProperty = (todayRef.data || []).find((prop: any) => prop.name === "date");
         
-        // 为块本身添加date属性
-        await orca.commands.invokeEditorCommand(
-          "core.editor.setProperties",
-          null,
-          [blockId],
-          [{ name: "date", type: PropType.DateTime, value: today }]
-        );
-        
-        updatedCount++;
+        if (!dateProperty) {
+          console.log(`块 ${blockId} 缺少date属性，添加中...`);
+          // 没有date属性，添加它
+          await orca.commands.invokeEditorCommand(
+            "core.editor.setRefData",
+            null,
+            todayRef,
+            [{ name: "date", type: PropType.DateTime, value: today }]
+          );
+          
+          await orca.commands.invokeEditorCommand(
+            "core.editor.setProperties",
+            null,
+            [blockId],
+            [{ name: "date", type: PropType.DateTime, value: today }]
+          );
+          
+          updatedCount++;
+          console.log(`✅ 成功为块 ${blockId} 添加date属性`);
+        } else if (needsDateUpdate(dateProperty.value, today)) {
+          console.log(`块 ${blockId} date属性需要更新`);
+          // 需要更新date属性
+          await orca.commands.invokeEditorCommand(
+            "core.editor.setRefData",
+            null,
+            todayRef,
+            [{ name: "date", type: PropType.DateTime, value: today }]
+          );
+          
+          await orca.commands.invokeEditorCommand(
+            "core.editor.setProperties",
+            null,
+            [blockId],
+            [{ name: "date", type: PropType.DateTime, value: today }]
+          );
+          
+          updatedCount++;
+          console.log(`✅ 成功更新块 ${blockId} 的date属性`);
+        } else {
+          console.log(`块 ${blockId} 不需要更新`);
+        }
+      } catch (error) {
+        console.error(`❌ 处理块 ${blockId} 失败:`, error);
       }
     }
 
+    console.log(`Today标签更新完成，更新了 ${updatedCount} 个标签`);
     return updatedCount;
-  } catch {
+  } catch (error) {
+    console.error('更新Today标签时出错:', error);
     return 0;
   }
 }

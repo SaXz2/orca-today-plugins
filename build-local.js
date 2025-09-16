@@ -23,8 +23,15 @@ try {
   
   // 4. 复制必要文件
   console.log('📋 复制文件...');
+  
+  // 创建dist目录
+  const distDir = path.join(pluginDir, 'dist');
+  if (!fs.existsSync(distDir)) {
+    fs.mkdirSync(distDir);
+  }
+  
   const filesToCopy = [
-    { src: 'dist/index.js', dest: 'index.js' },
+    { src: 'dist/index.js', dest: 'dist/index.js' },
     { src: 'package.json', dest: 'package.json' },
     { src: 'README.md', dest: 'README.md' },
     { src: 'LICENSE', dest: 'LICENSE' },
